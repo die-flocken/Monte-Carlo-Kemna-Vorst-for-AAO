@@ -1,0 +1,33 @@
+import random
+import cmath
+import math
+import numpy 
+import numpy.random
+		
+class cls_brownian:
+	def __init__(self, T, n):
+		self.t_n_list = [T, n]
+		self.times = [i*self.t_n_list[0]/self.t_n_list[1] for i in range(0,self.t_n_list[0]*self.t_n_list[1])] + [self.t_n_list[0]]
+		self.m_k_timesteps = [0]
+		for i in range(0, len(self.times)):
+			self.m_k_timesteps.append(numpy.random.normal(self.m_k_timesteps[i],math.sqrt(1/n)))
+	def fun_w_t(self, time):
+		for i in range(0, len(self.m_k_timesteps)):
+			if time >= (i*self.t_n_list[0])/self.t_n_list[1] and time < ((i+1)*self.t_n_list[0])/self.t_n_list[1]:
+				return(numpy.interp(time, [i*self.t_n_list[0]/self.t_n_list[1],(i+1)*self.t_n_list[0]/self.t_n_list[1]], [self.m_k_timesteps[i],self.m_k_timesteps[i+1]]))
+
+class cls_asian_opt(cls_brownian):
+	lmb_asian_opt_intd = lambda self, i, S_0, R, sigma:(S_0)*(math.exp(self.times[i]*(R-0.5*pow(sigma,2)) + sigma*self.m_k_timesteps[i]))
+	lmb_asian_opt_trpz = lambda self, start_i, S_0, R, sigma : sum([((self.times[i+1]-self.times[i])*(self.lmb_asian_opt_intd(i+1, S_0, R, sigma) + self.lmb_asian_opt_intd(i, S_0, R, sigma))/2).real for i in range(start_i, len(self.times) - 1)])
+	lmb_asian_opt = lambda self, R, sigma, K, S_0: (math.exp(-R*self.t_n_list[0]))*max(self.lmb_asian_opt_trpz(0, S_0, R, sigma)/self.t_n_list[0] - K, 0)
+	lmb_dlt_asian_opt = lambda self, R, sigma, K, S_0: math.exp(-R*self.t_n_list[0])*(self.lmb_asian_opt_trpz(0, S_0, R, sigma)/(S_0 * self.t_n_list[0]))*max(self.lmb_asian_opt_trpz(0, S_0, R, sigma)/self.t_n_list[0] - K, 0)
+	
+class cls_mcs_asian_opt(cls_asian_opt):
+	def __init__(self, T, n, n_sim_run, interest_rt, volatility, strike_prc, initial_prc):
+		super().__init__(T, n)
+		self.n_sim_run = n_sim_run
+		self.parameters = [interest_rt, volatility, strike_prc, initial_prc]
+		self.lst_asian_opt = [cls_asian_opt(self.t_n_list[0], self.t_n_list[1]) for i in range(0, M)]
+		
+	lmb_mcs_prc = lambda self: sum([self.lst_asian_opt[i].lmb_asian_opt(*self.parameters) for i in range(0, M)])/M
+	lmb_mcs_dlt = lambda self: sum([self.lst_asian_opt[i].lmb_dlt_asian_opt(*self.parameters) for i in range(0, M)])/M
