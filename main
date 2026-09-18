@@ -20,8 +20,8 @@ class cls_asian_opt(cls_brownian):
 	lmb_asian_opt_intd = lambda self, i, S_0, R, sigma:(S_0)*(math.exp(self.times[i]*(R-0.5*pow(sigma,2)) + sigma*self.m_k_timesteps[i]))
 	lmb_asian_opt_trpz = lambda self, start_i, S_0, R, sigma : sum([((self.times[i+1]-self.times[i])*(self.lmb_asian_opt_intd(i+1, S_0, R, sigma) + self.lmb_asian_opt_intd(i, S_0, R, sigma))/2).real for i in range(start_i, len(self.times) - 1)])
 	lmb_asian_opt = lambda self, R, sigma, K, S_0: (math.exp(-R*self.t_n_list[0]))*max(self.lmb_asian_opt_trpz(0, S_0, R, sigma)/self.t_n_list[0] - K, 0)
-	lmb_dlt_asian_opt = lambda self, R, sigma, K, S_0: math.exp(-R*self.t_n_list[0])*(self.lmb_asian_opt_trpz(0, S_0, R, sigma)/(S_0 * self.t_n_list[0]))*max(self.lmb_asian_opt_trpz(0, S_0, R, sigma)/self.t_n_list[0] - K, 0)
-	
+	lmb_dlt_asian_opt = lambda self, R, sigma, K, S_0: math.exp(-R*self.t_n_list[0])*(self.lmb_asian_opt_trpz(0, S_0, R, sigma)/(S_0 * self.t_n_list[0]))*(1 if self.lmb_asian_opt_trpz(0, S_0, R, sigma)/self.t_n_list[0] > K else 0)
+
 class cls_mcs_asian_opt(cls_asian_opt):
 	def __init__(self, T, n, n_sim_run, interest_rt, volatility, strike_prc, initial_prc):
 		super().__init__(T, n)
