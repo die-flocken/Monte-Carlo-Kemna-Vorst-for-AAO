@@ -3,34 +3,53 @@ import cmath
 import math
 import numpy 
 import numpy.random
+import statistics
+import numpy
 		
-class cls_brownian:
-	def __init__(self, T, n):
-		self.t_n_list = [T, n]
-		self.times = [i*self.t_n_list[0]/self.t_n_list[1] for i in range(0,self.t_n_list[0]*self.t_n_list[1])] + [self.t_n_list[0]]
-		self.m_k_timesteps = [0]
-		for i in range(0, len(self.times)):
-			self.m_k_timesteps.append(numpy.random.normal(self.m_k_timesteps[i],math.sqrt(1/n)))
-	def fun_w_t(self, time):
-		for i in range(0, len(self.m_k_timesteps)):
-			if time >= (i*self.t_n_list[0])/self.t_n_list[1] and time < ((i+1)*self.t_n_list[0])/self.t_n_list[1]:
-				return(numpy.interp(time, [i*self.t_n_list[0]/self.t_n_list[1],(i+1)*self.t_n_list[0]/self.t_n_list[1]], [self.m_k_timesteps[i],self.m_k_timesteps[i+1]]))
-
-class cls_asian_opt(cls_brownian):
-	lmb_int_calc_A = lambda self, i, R, sigma: R - 0.5 * pow(sigma,2) + sigma * (self.m_k_timesteps[i+1] - self.m_k_timesteps[i]) / (self.times[i+1] - self.times[i])
-	lmb_int_calc_B = lambda self, i, R, sigma: -sigma * (((self.m_k_timesteps[i+1] - self.m_k_timesteps[i]) / (self.times[i+1] - self.times[i])) * self.times[i] - self.m_k_timesteps[i])
-	lmb_int_calc_sum_term = lambda self, i, R, sigma: math.exp(self.lmb_int_calc_B(i, R, sigma)) * (math.exp(self.lmb_int_calc_A(i, R, sigma) * self.times[i+1]) - math.exp(self.lmb_int_calc_A(i, R, sigma) * self.times[i])) / self.lmb_int_calc_A(i, R, sigma)
-	lmb_int_calc_sum = lambda self, R, sigma: sum([self.lmb_int_calc_sum_term(i, R, sigma) for i in range(0, len(self.times) - 1)])
-	lmb_s_bar = lambda self, S_0, R, sigma: S_0 * self.lmb_int_calc_sum(R, sigma) / self.t_n_list[0]
-	lmb_asian_opt = lambda self, R, sigma, K, S_0: (math.exp(-R*self.t_n_list[0]))*max(self.lmb_s_bar(S_0, R, sigma) - K, 0)
-	lmb_dlt_asian_opt = lambda self, R, sigma, K, S_0: math.exp(-R*self.t_n_list[0])*(self.lmb_asian_opt_trpz(0, S_0, R, sigma)/(S_0 * self.t_n_list[0]))*(1 if self.lmb_s_bar(S_0, R, sigma) > K else 0)
-
-class cls_mcs_asian_opt(cls_asian_opt):
-	def __init__(self, T, n, n_sim_run, interest_rt, volatility, strike_prc, initial_prc):
-		super().__init__(T, n)
-		self.n_sim_run = n_sim_run
-		self.parameters = [interest_rt, volatility, strike_prc, initial_prc]
-		self.lst_asian_opt = [cls_asian_opt(self.t_n_list[0], self.t_n_list[1]) for i in range(0, M)]
+class cls_mcs_kv_aao:
+	
+	def __init__(self, in_final_t, in_n_brownian_stp, in_n_sim_run, in_interest_rt, in_volatility, in_strike_prc, in_initial_prc):
+		_n_sim_used_halfed = int(0.5 * in_n_sim_run)
+		self.l_parameters = [in_final_t, in_n_brownian_stp, in_n_sim_run, in_interest_rt, in_volatility, in_strike_prc, in_initial_prc]
 		
-	lmb_mcs_prc = lambda self: sum([self.lst_asian_opt[i].lmb_asian_opt(*self.parameters) for i in range(0, M)])/M
-	lmb_mcs_dlt = lambda self: sum([self.lst_asian_opt[i].lmb_dlt_asian_opt(*self.parameters) for i in range(0, M)])/M
+		self.m_brownian = numpy.concatenate((numpy.zeros((_n_sim_used_halfed,1)), numpy.cumsum(numpy.multiply(numpy.random.randn(_n_sim_used_halfed, in_n_brownian_stp), numpy.sqrt(in_final_t / in_n_brownian_stp)), axis = 1)), axis = 1)
+		self.m_brownian = numpy.concatenate((self.m_brownian, numpy.negative(self.m_brownian)), axis = 0)
+		self.m_timesteps = numpy.array([numpy.concatenate(([0],numpy.cumsum(numpy.full((1, in_n_brownian_stp), in_final_t / in_n_brownian_stp))))]).T
+	
+	#closed form solution geometric asian option	
+	f_gamma_t = lambda self: math.exp(-0.5 * self.l_parameters[3] * self.l_parameters[0] - (pow(self.l_parameters[4], 2) * self.l_parameters[0]) / 12)
+	f_lambda_t = lambda self: (math.log(self.l_parameters[5] / self.l_parameters[6]) * self.l_parameters[0]) / self.l_parameters[4] - (self.l_parameters[3] - 0.5 * math.pow(self.l_parameters[4], 2)) * math.pow(self.l_parameters[0], 2) / (2 * self.l_parameters[4])
+	
+	f_cfs_gao_prc = lambda self: self.l_parameters[6] * self.f_gamma_t() * (1 - statistics.NormalDist((self.l_parameters[4] * math.pow(self.l_parameters[0], 2)) / 3, math.sqrt(math.pow(self.l_parameters[0], 3) / 3)).cdf(self.f_lambda_t())) - K * math.exp(-R * self.l_parameters[0]) * (1 - statistics.NormalDist(0, math.sqrt(math.pow(self.l_parameters[0], 3) / 3)).cdf(self.f_lambda_t()))
+	
+	#path-dependent geometirc asian options
+	f_pd_gao_alpha = lambda self: numpy.exp(0.5 * (self.l_parameters[3] - 0.5 * self.l_parameters[4] ** 2) * self.l_parameters[0])
+	f_pd_gao_beta = lambda self: numpy.exp(self.l_parameters[4] * self.f_matrix_sstep() / (2 * self.l_parameters[0]))
+	
+	f_matrix_sstep = lambda self: numpy.sum((self.m_brownian[:, 1:] + self.m_brownian[:, :-1]), axis = 1) * (self.l_parameters[0] / self.l_parameters[1])
+	def f_pd_gao_prc(self):
+		self.m_pd_gao_prc = numpy.exp(-self.l_parameters[3] * self.l_parameters[0]) * numpy.maximum(self.l_parameters[6] * numpy.multiply(self.f_pd_gao_alpha(), self.f_pd_gao_beta()) - self.l_parameters[5], 0)
+	
+	#path-dependent arithmetic asian options	
+	def f_pd_aao_primary_f(self):
+		_m_delta = (self.m_brownian[:, 1:] - self.m_brownian[:, :-1]) * self.l_parameters[1] / self.l_parameters[0]
+		self.m_alpha_i = self.l_parameters[3] - 0.5 * self.l_parameters[4] ** 2 + _m_delta * self.l_parameters[4]
+		self.m_beta_i = -self.l_parameters[4] * (numpy.dot(_m_delta, numpy.diag(self.m_timesteps[:-1, :].T[0])) - self.m_brownian[:, :-1])
+	def f_pd_aao_s_bar(self):
+		self.f_pd_aao_primary_f()
+		_m_pd_aao_step = numpy.reciprocal(self.m_alpha_i) * numpy.exp(self.m_beta_i) * (numpy.exp(numpy.dot(self.m_alpha_i, numpy.diag(self.m_timesteps[1:, :].T[0]))) - numpy.exp(numpy.dot(self.m_alpha_i, numpy.diag(self.m_timesteps[:-1, :].T[0]))))
+		self.m_pd_aao_s_bar = (self.l_parameters[6] / self.l_parameters[0]) * numpy.sum((_m_pd_aao_step), axis = 1)
+	def f_pd_aao_prc(self):
+		self.f_pd_aao_s_bar()
+		self.m_pd_aao_prc = numpy.array([numpy.exp(-self.l_parameters[3] * self.l_parameters[0]) * numpy.maximum(self.m_pd_aao_s_bar - self.l_parameters[5], 0)]).T
+	
+	#correlation block
+	def f_kemna_vorst_block(self):
+		self.f_pd_gao_prc()
+		self.f_pd_aao_prc()
+		
+		_gao_mean = numpy.mean(self.m_pd_gao_prc)
+		_aao_mean = numpy.mean(self.m_pd_aao_prc)
+		
+		_c = numpy.cov(self.m_pd_aao_prc.T[0], self.m_pd_gao_prc)[0,1] / numpy.var(self.m_pd_gao_prc, ddof = 1)
+		self.aao_kemna_vorst_prc = _aao_mean - _c * (_gao_mean - self.f_cfs_gao_prc())
