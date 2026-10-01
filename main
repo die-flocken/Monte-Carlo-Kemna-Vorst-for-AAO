@@ -8,52 +8,80 @@ import numpy
 
 class cls_mcs_kv_aao:
 	
-	def __init__(self, in_final_t, in_n_brownian_stp, in_n_sim_run, in_interest_rt, in_volatility, in_strike_prc, in_initial_prc):
+	def __init__(self, in_final_t, in_n_brownian_stp, in_n_sim_run, in_interest_rt, in_volatility, in_strike_prc, in_initial_prc, in_m_stock_prc):
 		_n_sim_used_halfed = int(0.5 * in_n_sim_run)
 		self.l_parameters = [in_final_t, in_n_brownian_stp, in_n_sim_run, in_interest_rt, in_volatility, in_strike_prc, in_initial_prc]
+		self.m_stock_prc = numpy.concatenate((numpy.array([in_initial_prc]), in_m_stock_prc))
 		
 		self.m_brownian = numpy.concatenate((numpy.zeros((_n_sim_used_halfed,1)), numpy.cumsum(numpy.multiply(numpy.random.randn(_n_sim_used_halfed, in_n_brownian_stp), numpy.sqrt(in_final_t / in_n_brownian_stp)), axis = 1)), axis = 1)
 		self.m_brownian = numpy.concatenate((self.m_brownian, numpy.negative(self.m_brownian)), axis = 0)
 		self.m_timesteps = numpy.array([numpy.concatenate(([0],numpy.cumsum(numpy.full((1, in_n_brownian_stp), in_final_t / in_n_brownian_stp))))]).T
+	
+	def f_stock_cond(self, in_n):
+		_m_stock_cond = self.m_stock_prc[:in_n]
+		self.m_brownian_cond = numpy.log(_m_stock_cond / self.l_parameters[6]) / self.l_parameters[4] - (self.m_timesteps.T[0][:in_n] / self.l_parameters[4]) * (self.l_parameters[3] - 0.5 * self.l_parameters[4] ** 2)
+	
+	def f_brownian_upd(self, in_n):
+		self.f_stock_cond(in_n)
+		_m_brownian_sep = self.m_brownian[:, 1:self.l_parameters[1] - in_n + 2]
+		_m_tiled_brownian_last = numpy.tile( numpy.array([self.m_brownian_cond[-1]]), (self.l_parameters[2], self.l_parameters[1] - in_n + 1))
+		self.m_brownian_cps = numpy.concatenate((numpy.tile(self.m_brownian_cond, (self.l_parameters[2], 1)), _m_tiled_brownian_last + _m_brownian_sep), axis = 1)
+		
+	def f_test_recur(self):
+		self.f_kemna_vorst_block_prc(self.m_brownian)
+		self.f_kemna_vorst_block_dlt(self.m_brownian)
+		_init_cap = self.aao_kemna_vorst_prc
+		_prev_dlt = self.aao_kemna_vorst_dlt
+		_debt_ir = _init_cap - self.l_parameters[6] * _prev_dlt
+		for i in range(2, self.l_parameters[1] + 2):
+			self.f_brownian_upd(i)
+			_debt_ir = _debt_ir * math.exp(self.l_parameters[3] * self.l_parameters[0] / self.l_parameters[1])
+			_m_brownian = self.m_brownian_cps
+			self.f_kemna_vorst_block_dlt(_m_brownian)
+			_scaled = (self.l_parameters[1] - i + 1) / (self.l_parameters[1] + 1)
+			_debt_ir = _debt_ir - self.m_stock_prc[i-1] * (_scaled * self.aao_kemna_vorst_dlt - _prev_dlt)
+			_prev_dlt = _scaled * self.aao_kemna_vorst_dlt
+		return(_scaled * self.aao_kemna_vorst_dlt * self.m_stock_prc[i-1] + _debt_ir)
+			
 	
 	#price
 	#closed form solution geometric asian option	
 	f_gamma_t = lambda self: math.exp(-0.5 * self.l_parameters[3] * self.l_parameters[0] - (pow(self.l_parameters[4], 2) * self.l_parameters[0]) / 12)
 	f_lambda_t = lambda self: (math.log(self.l_parameters[5] / self.l_parameters[6]) * self.l_parameters[0]) / self.l_parameters[4] - (self.l_parameters[3] - 0.5 * math.pow(self.l_parameters[4], 2)) * math.pow(self.l_parameters[0], 2) / (2 * self.l_parameters[4])
 	
-	f_cfs_gao_prc = lambda self: self.l_parameters[6] * self.f_gamma_t() * (1 - statistics.NormalDist((self.l_parameters[4] * math.pow(self.l_parameters[0], 2)) / 3, math.sqrt(math.pow(self.l_parameters[0], 3) / 3)).cdf(self.f_lambda_t())) - K * math.exp(-R * self.l_parameters[0]) * (1 - statistics.NormalDist(0, math.sqrt(math.pow(self.l_parameters[0], 3) / 3)).cdf(self.f_lambda_t()))
+	f_cfs_gao_prc = lambda self: self.l_parameters[6] * self.f_gamma_t() * (1 - statistics.NormalDist((self.l_parameters[4] * math.pow(self.l_parameters[0], 2)) / 3, math.sqrt(math.pow(self.l_parameters[0], 3) / 3)).cdf(self.f_lambda_t())) - self.l_parameters[5] * math.exp(-self.l_parameters[3] * self.l_parameters[0]) * (1 - statistics.NormalDist(0, math.sqrt(math.pow(self.l_parameters[0], 3) / 3)).cdf(self.f_lambda_t()))
 	
 		#path-dependent geometirc asian options
 	f_pd_gao_alpha = lambda self: numpy.exp(0.5 * (self.l_parameters[3] - 0.5 * self.l_parameters[4] ** 2) * self.l_parameters[0])
-	f_pd_gao_beta = lambda self: numpy.exp(self.l_parameters[4] * self.f_matrix_sstep() / (2 * self.l_parameters[0]))
+	f_pd_gao_beta = lambda self, _in_m_brownian: numpy.exp(self.l_parameters[4] * self.f_matrix_sstep(_in_m_brownian) / (2 * self.l_parameters[0]))
 	
-	f_matrix_sstep = lambda self: numpy.sum((self.m_brownian[:, 1:] + self.m_brownian[:, :-1]), axis = 1) * (self.l_parameters[0] / self.l_parameters[1])
+	f_matrix_sstep = lambda self, _in_m_brownian: numpy.sum((_in_m_brownian[:, 1:] + _in_m_brownian[:, :-1]), axis = 1) * (self.l_parameters[0] / self.l_parameters[1])
 	
-	def f_pd_gao_s_bar(self):
-		self.m_pd_gao_s_bar = self.l_parameters[6] * numpy.multiply(self.f_pd_gao_alpha(), self.f_pd_gao_beta())
-	def f_pd_gao_prc(self):
-		self.f_pd_gao_s_bar()
+	def f_pd_gao_s_bar(self, _in_m_brownian):
+		self.m_pd_gao_s_bar = self.l_parameters[6] * numpy.multiply(self.f_pd_gao_alpha(), self.f_pd_gao_beta(_in_m_brownian))
+	def f_pd_gao_prc(self, _in_m_brownian):
+		self.f_pd_gao_s_bar(_in_m_brownian)
 		self.m_pd_gao_prc = numpy.exp(-self.l_parameters[3] * self.l_parameters[0]) * numpy.maximum(self.m_pd_gao_s_bar - self.l_parameters[5], 0)
 	
 	#path-dependent arithmetic asian options	
-	def f_pd_aao_primary_f(self):
-		_m_delta = (self.m_brownian[:, 1:] - self.m_brownian[:, :-1]) * self.l_parameters[1] / self.l_parameters[0]
+	def f_pd_aao_primary_f(self, _in_m_brownian):
+		_m_delta = (_in_m_brownian[:, 1:] - _in_m_brownian[:, :-1]) * self.l_parameters[1] / self.l_parameters[0]
 		self.m_alpha_i = self.l_parameters[3] - 0.5 * self.l_parameters[4] ** 2 + _m_delta * self.l_parameters[4]
-		self.m_beta_i = -self.l_parameters[4] * (numpy.dot(_m_delta, numpy.diag(self.m_timesteps[:-1, :].T[0])) - self.m_brownian[:, :-1])
+		self.m_beta_i = -self.l_parameters[4] * (numpy.dot(_m_delta, numpy.diag(self.m_timesteps[:-1, :].T[0])) - _in_m_brownian[:, :-1])
 		
-	def f_pd_aao_s_bar(self):
-		self.f_pd_aao_primary_f()
+	def f_pd_aao_s_bar(self, _in_m_brownian):
+		self.f_pd_aao_primary_f(_in_m_brownian)
 		_m_pd_aao_step = numpy.reciprocal(self.m_alpha_i) * numpy.exp(self.m_beta_i) * (numpy.exp(numpy.dot(self.m_alpha_i, numpy.diag(self.m_timesteps[1:, :].T[0]))) - numpy.exp(numpy.dot(self.m_alpha_i, numpy.diag(self.m_timesteps[:-1, :].T[0]))))
 		self.m_pd_aao_s_bar = (self.l_parameters[6] / self.l_parameters[0]) * numpy.sum((_m_pd_aao_step), axis = 1)
 		
-	def f_pd_aao_prc(self):
-		self.f_pd_aao_s_bar()
+	def f_pd_aao_prc(self, _in_m_brownian):
+		self.f_pd_aao_s_bar(_in_m_brownian)
 		self.m_pd_aao_prc = numpy.array([numpy.exp(-self.l_parameters[3] * self.l_parameters[0]) * numpy.maximum(self.m_pd_aao_s_bar - self.l_parameters[5], 0)]).T
 	
 	#correlation block
-	def f_kemna_vorst_block_prc(self):
-		self.f_pd_gao_prc()
-		self.f_pd_aao_prc()
+	def f_kemna_vorst_block_prc(self, _in_brownian):
+		self.f_pd_gao_prc(_in_brownian)
+		self.f_pd_aao_prc(_in_brownian)
 		_gao_prc_mean = numpy.mean(self.m_pd_gao_prc)
 		_aao_prc_mean = numpy.mean(self.m_pd_aao_prc)
 		_c = numpy.cov(self.m_pd_aao_prc.T[0], self.m_pd_gao_prc)[0,1] / numpy.var(self.m_pd_gao_prc, ddof = 1)
@@ -71,21 +99,22 @@ class cls_mcs_kv_aao:
 		self.cfs_gao_dlt = _term_a + _term_b - _term_c
 		
 	#path-dependent geometric asian option
-	def f_pd_gao_dlt(self):
-		self.f_pd_gao_s_bar()
+	def f_pd_gao_dlt(self, _in_m_brownian):
+		self.f_pd_gao_s_bar(_in_m_brownian)
 		self.m_pd_gao_dlt = numpy.exp(-self.l_parameters[3] * self.l_parameters[0]) * (self.m_pd_gao_s_bar / self.l_parameters[6]) * (numpy.sign(self.m_pd_gao_s_bar - self.l_parameters[5]) + 1) / 2
 		
 	#path-dependent arithmetic asian option
-	def f_pd_aao_dlt(self):
-		self.f_pd_aao_s_bar()
+	def f_pd_aao_dlt(self, _in_m_brownian):
+		self.f_pd_aao_s_bar(_in_m_brownian)
 		self.m_pd_aao_dlt = numpy.exp(-self.l_parameters[3] * self.l_parameters[0]) * self.m_pd_aao_s_bar / self.l_parameters[6] * (numpy.sign(self.m_pd_aao_s_bar - self.l_parameters[5]) + 1) / 2
 	
 	#correlation block
-	def f_kemna_vorst_block_dlt(self):
-		self.f_pd_gao_dlt()
-		self.f_pd_aao_dlt()
+	def f_kemna_vorst_block_dlt(self, _in_m_brownian):
+		self.f_pd_gao_dlt(_in_m_brownian)
+		self.f_pd_aao_dlt(_in_m_brownian)
 		self.f_cfs_gao_dlt()
 		_gao_dlt_mean = numpy.mean(self.m_pd_gao_dlt)
 		_aao_dlt_mean = numpy.mean(self.m_pd_aao_dlt)
-		_c = numpy.cov(self.m_pd_aao_dlt, self.m_pd_gao_dlt)[0,1] / numpy.var(self.m_pd_gao_dlt, ddof = 1)
+		_var_gao_dlt = numpy.var(self.m_pd_gao_dlt, ddof = 1) 
+		_c = numpy.cov(self.m_pd_aao_dlt, self.m_pd_gao_dlt)[0,1] / _var_gao_dlt if _var_gao_dlt > 0 else 0
 		self.aao_kemna_vorst_dlt = _aao_dlt_mean - _c * (_gao_dlt_mean - self.cfs_gao_dlt)
