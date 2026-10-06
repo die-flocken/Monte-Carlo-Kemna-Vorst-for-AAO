@@ -1,120 +1,178 @@
-import random
-import cmath
-import math
-import numpy 
-import numpy.random
-import statistics
-import numpy
+class mcs_kvcv_aao{
 
-class cls_mcs_kv_aao:
-	
-	def __init__(self, in_final_t, in_n_brownian_stp, in_n_sim_run, in_interest_rt, in_volatility, in_strike_prc, in_initial_prc, in_m_stock_prc):
-		_n_sim_used_halfed = int(0.5 * in_n_sim_run)
-		self.l_parameters = [in_final_t, in_n_brownian_stp, in_n_sim_run, in_interest_rt, in_volatility, in_strike_prc, in_initial_prc]
-		self.m_stock_prc = numpy.concatenate((numpy.array([in_initial_prc]), in_m_stock_prc))
+		public:
 		
-		self.m_brownian = numpy.concatenate((numpy.zeros((_n_sim_used_halfed,1)), numpy.cumsum(numpy.multiply(numpy.random.randn(_n_sim_used_halfed, in_n_brownian_stp), numpy.sqrt(in_final_t / in_n_brownian_stp)), axis = 1)), axis = 1)
-		self.m_brownian = numpy.concatenate((self.m_brownian, numpy.negative(self.m_brownian)), axis = 0)
-		self.m_timesteps = numpy.array([numpy.concatenate(([0],numpy.cumsum(numpy.full((1, in_n_brownian_stp), in_final_t / in_n_brownian_stp))))]).T
-	
-	def f_stock_cond(self, in_n):
-		_m_stock_cond = self.m_stock_prc[:in_n]
-		self.m_brownian_cond = numpy.log(_m_stock_cond / self.l_parameters[6]) / self.l_parameters[4] - (self.m_timesteps.T[0][:in_n] / self.l_parameters[4]) * (self.l_parameters[3] - 0.5 * self.l_parameters[4] ** 2)
-	
-	def f_brownian_upd(self, in_n):
-		self.f_stock_cond(in_n)
-		_m_brownian_sep = self.m_brownian[:, 1:self.l_parameters[1] - in_n + 2]
-		_m_tiled_brownian_last = numpy.tile( numpy.array([self.m_brownian_cond[-1]]), (self.l_parameters[2], self.l_parameters[1] - in_n + 1))
-		self.m_brownian_cps = numpy.concatenate((numpy.tile(self.m_brownian_cond, (self.l_parameters[2], 1)), _m_tiled_brownian_last + _m_brownian_sep), axis = 1)
+		double norm_cdf(double x, double mu, double sigma)
+				{return(0.5 * (1 + std::erf((x - mu) / (std::sqrt(2) * sigma))));}
+				
+		mcs_kvcv_aao(double in_ft, int in_bs, int in_mcr, double in_ir, double in_v, double in_sp, double in_ip, Eigen::RowVectorXd in_stockprc, unsigned long long seed = std::random_device{}()): 
+		gen(seed), n_brownian_stp(in_bs), n_mcs_run(in_mcr), p_final_t(in_ft), p_int_rt(in_ir), p_vol(in_v), p_strk_prc(in_sp), p_init_prc(in_ip), v_stock_prcs(in_stockprc)
+		{
+				double _sd = std::sqrt(p_final_t / n_brownian_stp);
+				Eigen::MatrixXd m_brownian_nz = Eigen::MatrixXd::Zero(n_mcs_run * 0.5, n_brownian_stp).unaryExpr([this, _sd](double){return(gaussian(gen) * _sd);});
+				for(int i = 1; i < m_brownian_nz.cols(); i++)
+						{m_brownian_nz.col(i) += m_brownian_nz.col(i-1);}
+				Eigen::MatrixXd m_brownian_az(m_brownian_nz.rows(), m_brownian_nz.cols() + 1);
+				m_brownian_az << Eigen::MatrixXd::Zero(n_mcs_run * 0.5, 1), m_brownian_nz;
+				Eigen::MatrixXd m_brownian_l(m_brownian_az.rows() * 2, m_brownian_az.cols());
+				m_brownian_l << m_brownian_az, (-1) * m_brownian_az; 
+				m_brownian = m_brownian_l;
+				v_timesteps = Eigen::VectorXd::LinSpaced(n_brownian_stp + 1, 0, p_final_t);
+				
+				gao_alpha_t = std::exp(0.5 * p_final_t * (p_int_rt - 0.5 * std::pow(p_vol, 2)));
+				gamma_t = std::exp(-0.5 * p_int_rt * p_final_t - (std::pow(p_vol, 2) * p_final_t) / 12);
+				lambda_t = (p_final_t / p_vol) * std::log(p_strk_prc / p_init_prc) - (std::pow(p_final_t, 2) / (2 * p_vol)) * (p_int_rt - 0.5 * std::pow(p_vol, 2));
+		}
 		
-	def f_test_recur(self):
-		self.f_kemna_vorst_block_prc(self.m_brownian)
-		self.f_kemna_vorst_block_dlt(self.m_brownian)
-		_init_cap = self.aao_kemna_vorst_prc
-		_prev_dlt = self.aao_kemna_vorst_dlt
-		_debt_ir = _init_cap - self.l_parameters[6] * _prev_dlt
-		for i in range(2, self.l_parameters[1] + 2):
-			self.f_brownian_upd(i)
-			_debt_ir = _debt_ir * math.exp(self.l_parameters[3] * self.l_parameters[0] / self.l_parameters[1])
-			_m_brownian = self.m_brownian_cps
-			self.f_kemna_vorst_block_dlt(_m_brownian)
-			_scaled = (self.l_parameters[1] - i + 1) / (self.l_parameters[1] + 1)
-			_debt_ir = _debt_ir - self.m_stock_prc[i-1] * (_scaled * self.aao_kemna_vorst_dlt - _prev_dlt)
-			_prev_dlt = _scaled * self.aao_kemna_vorst_dlt
-		return(_scaled * self.aao_kemna_vorst_dlt * self.m_stock_prc[i-1] + _debt_ir)
-			
-	
-	#price
-	#closed form solution geometric asian option	
-	f_gamma_t = lambda self: math.exp(-0.5 * self.l_parameters[3] * self.l_parameters[0] - (pow(self.l_parameters[4], 2) * self.l_parameters[0]) / 12)
-	f_lambda_t = lambda self: (math.log(self.l_parameters[5] / self.l_parameters[6]) * self.l_parameters[0]) / self.l_parameters[4] - (self.l_parameters[3] - 0.5 * math.pow(self.l_parameters[4], 2)) * math.pow(self.l_parameters[0], 2) / (2 * self.l_parameters[4])
-	
-	f_cfs_gao_prc = lambda self: self.l_parameters[6] * self.f_gamma_t() * (1 - statistics.NormalDist((self.l_parameters[4] * math.pow(self.l_parameters[0], 2)) / 3, math.sqrt(math.pow(self.l_parameters[0], 3) / 3)).cdf(self.f_lambda_t())) - self.l_parameters[5] * math.exp(-self.l_parameters[3] * self.l_parameters[0]) * (1 - statistics.NormalDist(0, math.sqrt(math.pow(self.l_parameters[0], 3) / 3)).cdf(self.f_lambda_t()))
-	
-		#path-dependent geometirc asian options
-	f_pd_gao_alpha = lambda self: numpy.exp(0.5 * (self.l_parameters[3] - 0.5 * self.l_parameters[4] ** 2) * self.l_parameters[0])
-	f_pd_gao_beta = lambda self, _in_m_brownian: numpy.exp(self.l_parameters[4] * self.f_matrix_sstep(_in_m_brownian) / (2 * self.l_parameters[0]))
-	
-	f_matrix_sstep = lambda self, _in_m_brownian: numpy.sum((_in_m_brownian[:, 1:] + _in_m_brownian[:, :-1]), axis = 1) * (self.l_parameters[0] / self.l_parameters[1])
-	
-	def f_pd_gao_s_bar(self, _in_m_brownian):
-		self.m_pd_gao_s_bar = self.l_parameters[6] * numpy.multiply(self.f_pd_gao_alpha(), self.f_pd_gao_beta(_in_m_brownian))
-	def f_pd_gao_prc(self, _in_m_brownian):
-		self.f_pd_gao_s_bar(_in_m_brownian)
-		self.m_pd_gao_prc = numpy.exp(-self.l_parameters[3] * self.l_parameters[0]) * numpy.maximum(self.m_pd_gao_s_bar - self.l_parameters[5], 0)
-	
-	#path-dependent arithmetic asian options	
-	def f_pd_aao_primary_f(self, _in_m_brownian):
-		_m_delta = (_in_m_brownian[:, 1:] - _in_m_brownian[:, :-1]) * self.l_parameters[1] / self.l_parameters[0]
-		self.m_alpha_i = self.l_parameters[3] - 0.5 * self.l_parameters[4] ** 2 + _m_delta * self.l_parameters[4]
-		self.m_beta_i = -self.l_parameters[4] * (numpy.dot(_m_delta, numpy.diag(self.m_timesteps[:-1, :].T[0])) - _in_m_brownian[:, :-1])
+		double sim_run()
+		{
+				double _init_cap = kemna_vorst_block_prc(m_brownian);
+				double _prev_dlt = (n_brownian_stp / (n_brownian_stp + 1)) * kemna_vorst_block_dlt(m_brownian);
+				double _debt_ira = _init_cap - p_init_prc * _prev_dlt;
+				for(int i = 2; i <= n_brownian_stp; i++)
+				{
+						Eigen::MatrixXd _m_new_brownian = brownian_cond(i);
+						_debt_ira = _debt_ira * std::exp(p_int_rt * p_final_t / n_brownian_stp);
+						double _new_dlt = kemna_vorst_block_dlt(_m_new_brownian);
+						double _scaled = ((n_brownian_stp - i + 1)*1.0) / ((n_brownian_stp + 1)*1.0);
+						_debt_ira = _debt_ira - v_stock_prcs(i-1) * (_scaled * _new_dlt - _prev_dlt);
+						_prev_dlt = _scaled * _new_dlt;
+				}
+				return(_prev_dlt / (n_brownian_stp + 1) * v_stock_prcs(Eigen::last) + _debt_ira);
+		}
 		
-	def f_pd_aao_s_bar(self, _in_m_brownian):
-		self.f_pd_aao_primary_f(_in_m_brownian)
-		_m_pd_aao_step = numpy.reciprocal(self.m_alpha_i) * numpy.exp(self.m_beta_i) * (numpy.exp(numpy.dot(self.m_alpha_i, numpy.diag(self.m_timesteps[1:, :].T[0]))) - numpy.exp(numpy.dot(self.m_alpha_i, numpy.diag(self.m_timesteps[:-1, :].T[0]))))
-		self.m_pd_aao_s_bar = (self.l_parameters[6] / self.l_parameters[0]) * numpy.sum((_m_pd_aao_step), axis = 1)
+		private:
+
+				int n_brownian_stp;
+				int n_mcs_run;
+				
+				double p_final_t;
+				double p_int_rt;
+				double p_vol;
+				double p_strk_prc;
+				double p_init_prc;
 		
-	def f_pd_aao_prc(self, _in_m_brownian):
-		self.f_pd_aao_s_bar(_in_m_brownian)
-		self.m_pd_aao_prc = numpy.array([numpy.exp(-self.l_parameters[3] * self.l_parameters[0]) * numpy.maximum(self.m_pd_aao_s_bar - self.l_parameters[5], 0)]).T
-	
-	#correlation block
-	def f_kemna_vorst_block_prc(self, _in_brownian):
-		self.f_pd_gao_prc(_in_brownian)
-		self.f_pd_aao_prc(_in_brownian)
-		_gao_prc_mean = numpy.mean(self.m_pd_gao_prc)
-		_aao_prc_mean = numpy.mean(self.m_pd_aao_prc)
-		_c = numpy.cov(self.m_pd_aao_prc.T[0], self.m_pd_gao_prc)[0,1] / numpy.var(self.m_pd_gao_prc, ddof = 1)
-		self.aao_kemna_vorst_prc = _aao_prc_mean - _c * (_gao_prc_mean - self.f_cfs_gao_prc())
-	
-	#delta
-	#closed form solution geometric asian option
-	def f_cfs_gao_dlt(self):
-		_gamma_t = self.f_gamma_t()
-		_lambda_t = self.f_lambda_t()
-		_term_a = _gamma_t * (1 - statistics.NormalDist((self.l_parameters[4] * math.pow(self.l_parameters[0], 2)) / 3, math.sqrt(math.pow(self.l_parameters[0], 3) / 3)).cdf(_lambda_t))
-		_term_phi = 1 / (self.l_parameters[4] * math.sqrt(2 * math.pi * self.l_parameters[0] ** 3 / 3))
-		_term_b = _term_phi * _gamma_t * math.exp( (-3 / (2 * self.l_parameters[0] ** 3)) * ((_lambda_t ** 2) - (2 * _lambda_t * self.l_parameters[0] ** 2 * self.l_parameters[4] / 3) + (self.l_parameters[4] ** 2 * self.l_parameters[0] ** 4 / 9)))
-		_term_c = _term_phi * self.l_parameters[5] * math.exp(-self.l_parameters[0] * self.l_parameters[3]) / self.l_parameters[6] * math.exp((-3 / (2 * self.l_parameters[0] ** 3)) * (_lambda_t ** 2))
-		self.cfs_gao_dlt = _term_a + _term_b - _term_c
+				std::mt19937_64 gen;
+				std::normal_distribution<double> gaussian{0.0, 1.0};
+				
+				Eigen::MatrixXd m_brownian;
+				Eigen::VectorXd v_timesteps;
+				Eigen::RowVectorXd v_stock_prcs;
 		
-	#path-dependent geometric asian option
-	def f_pd_gao_dlt(self, _in_m_brownian):
-		self.f_pd_gao_s_bar(_in_m_brownian)
-		self.m_pd_gao_dlt = numpy.exp(-self.l_parameters[3] * self.l_parameters[0]) * (self.m_pd_gao_s_bar / self.l_parameters[6]) * (numpy.sign(self.m_pd_gao_s_bar - self.l_parameters[5]) + 1) / 2
+				double gao_alpha_t;
+				double gamma_t;
+				double lambda_t;
+
+		Eigen::RowVectorXd brownian_cond_conv(int _in_n)
+		{
+				Eigen::RowVectorXd _stock_cond = v_stock_prcs.leftCols(_in_n);
+				Eigen::RowVectorXd _brownian_cond = (_stock_cond / p_init_prc).array().log() / p_vol - v_timesteps.head(_in_n).transpose() / p_vol * (p_int_rt - 0.5 * std::pow(p_vol, 2));
+				return(_brownian_cond);
+		}
+		Eigen::MatrixXd brownian_cond(int _in_n)
+		{
+				Eigen::RowVectorXd _v_brownian_cond = brownian_cond_conv(_in_n);
+				Eigen::MatrixXd _m_brownian_end = m_brownian.leftCols(n_brownian_stp - _in_n + 1).array() + _v_brownian_cond(Eigen::last);
+				Eigen::MatrixXd _m_brownian_beg = _v_brownian_cond.replicate(n_mcs_run, 1);
+				Eigen::MatrixXd _brownian_cond(_m_brownian_beg.rows(), _m_brownian_beg.cols() + _m_brownian_end.cols());
+				_brownian_cond << _m_brownian_beg, _m_brownian_end;
+				return(_brownian_cond);			
+		}
 		
-	#path-dependent arithmetic asian option
-	def f_pd_aao_dlt(self, _in_m_brownian):
-		self.f_pd_aao_s_bar(_in_m_brownian)
-		self.m_pd_aao_dlt = numpy.exp(-self.l_parameters[3] * self.l_parameters[0]) * self.m_pd_aao_s_bar / self.l_parameters[6] * (numpy.sign(self.m_pd_aao_s_bar - self.l_parameters[5]) + 1) / 2
-	
-	#correlation block
-	def f_kemna_vorst_block_dlt(self, _in_m_brownian):
-		self.f_pd_gao_dlt(_in_m_brownian)
-		self.f_pd_aao_dlt(_in_m_brownian)
-		self.f_cfs_gao_dlt()
-		_gao_dlt_mean = numpy.mean(self.m_pd_gao_dlt)
-		_aao_dlt_mean = numpy.mean(self.m_pd_aao_dlt)
-		_var_gao_dlt = numpy.var(self.m_pd_gao_dlt, ddof = 1) 
-		_c = numpy.cov(self.m_pd_aao_dlt, self.m_pd_gao_dlt)[0,1] / _var_gao_dlt if _var_gao_dlt > 0 else 0
-		self.aao_kemna_vorst_dlt = _aao_dlt_mean - _c * (_gao_dlt_mean - self.cfs_gao_dlt)
+		double cfs_gao_prc()
+		{
+				double _sd = std::sqrt(std::pow(p_final_t, 3) / 3);
+				double _mean = p_vol * std::pow(p_final_t, 2) / 3;
+				double _cfs_gao_prc = p_init_prc * gamma_t * (1 - norm_cdf(lambda_t, _mean, _sd)) - p_strk_prc * std::exp(-p_int_rt * p_final_t) * (1 - norm_cdf(lambda_t, 0, _sd));
+				return(_cfs_gao_prc);
+		}
+		
+		double cfs_gao_dlt()
+		{
+				double _sd = std::sqrt(std::pow(p_final_t, 3) / 3);
+				double _mean = p_vol * std::pow(p_final_t, 2) / 3;
+				double _term_phi = (1 / p_vol) * std::sqrt(3 / (2 * p_final_t * std::numbers::pi));
+				double _term_a = gamma_t * (1 - norm_cdf(lambda_t, _mean, _sd));
+				double _term_b = gamma_t * _term_phi * std::exp(-3 / (2 * std::pow(p_final_t, 3)) * (std::pow(lambda_t, 2) - (2.0 / 3.0) * lambda_t * p_vol * std::pow(p_final_t, 2) + std::pow(p_vol, 2) * std::pow(p_final_t, 4) / 9));
+				double _term_c = (_term_phi * p_strk_prc * std::exp(-p_int_rt * p_final_t) / p_init_prc) * std::exp(-3 * std::pow(lambda_t, 2) / (2 * std::pow(p_final_t, 3)));
+				return(_term_a + _term_b - _term_c);
+		}
+
+		Eigen::MatrixXd step_t(const Eigen::MatrixXd _in_m_brownian)
+		{
+				Eigen::MatrixXd w_a = _in_m_brownian.leftCols(_in_m_brownian.cols() - 1);
+				Eigen::MatrixXd w_b = _in_m_brownian.rightCols(_in_m_brownian.cols() - 1);
+				return((p_final_t / n_brownian_stp) * (w_a + w_b));
+		}
+		Eigen::MatrixXd gao_beta_t(const Eigen::MatrixXd _in_m_brownian)
+				{return((step_t(_in_m_brownian).rowwise().sum() * p_vol / (2 * p_final_t)).array().exp());}
+		Eigen::VectorXd gao_s_bar(const Eigen::MatrixXd _in_m_brownian)
+				{return(p_init_prc * gao_alpha_t * gao_beta_t(_in_m_brownian));}
+		Eigen::VectorXd pd_gao_prc(const Eigen::MatrixXd _in_m_brownian)
+				{return(std::exp(-p_int_rt * p_final_t) * (gao_s_bar(_in_m_brownian).array() - p_strk_prc).max(0.0));}
+		
+		Eigen::VectorXd pd_gao_dlt(const Eigen::MatrixXd _in_m_brownian)
+		{
+				Eigen::VectorXd _s_bar = gao_s_bar(_in_m_brownian);
+				Eigen::VectorXd _pd_gao_dlt = std::exp(-p_final_t * p_int_rt) * (_s_bar.array() / p_init_prc) * (_s_bar.array() - p_strk_prc > 0).cast<double>();
+				return(_pd_gao_dlt);
+		}
+
+		Eigen::MatrixXd delta_t(const Eigen::MatrixXd _in_m_brownian)
+		{
+				Eigen::MatrixXd w_a = _in_m_brownian.leftCols(_in_m_brownian.cols() - 1);
+				Eigen::MatrixXd w_b = _in_m_brownian.rightCols(_in_m_brownian.cols() - 1);
+				return((w_b - w_a) / (p_final_t / n_brownian_stp));
+		}
+		Eigen::MatrixXd aao_alpha_t(const Eigen::MatrixXd _in_m_brownian)
+				{return((p_int_rt - 0.5 * std::pow(p_vol, 2) + delta_t(_in_m_brownian).array() * p_vol).matrix());}
+		Eigen::MatrixXd aao_beta_t(Eigen::MatrixXd _in_m_brownian)
+		{
+				Eigen::MatrixXd _w_a = _in_m_brownian.leftCols(_in_m_brownian.cols() - 1);
+				Eigen::VectorXd _t_a = v_timesteps.topRows(v_timesteps.rows() - 1);
+				Eigen::MatrixXd _delta = delta_t(_in_m_brownian);
+				return(-p_vol * (_delta * _t_a.asDiagonal() - _w_a));
+		}
+		Eigen::MatrixXd aao_s_bar(const Eigen::MatrixXd _in_m_brownian)
+		{
+				Eigen::MatrixXd alpha = aao_alpha_t(_in_m_brownian);
+				Eigen::MatrixXd beta = aao_beta_t(_in_m_brownian);
+				Eigen::MatrixXd step = alpha.array().inverse() * beta.array().exp() * 
+						((alpha * v_timesteps.bottomRows(v_timesteps.rows() - 1).asDiagonal()).array().exp() - 
+						(alpha * v_timesteps.topRows(v_timesteps.rows() - 1).asDiagonal()).array().exp());
+				return(step.rowwise().sum() * p_init_prc / p_final_t);
+		}
+		Eigen::VectorXd pd_aao_prc(const Eigen::MatrixXd _in_m_brownian)
+				{return(std::exp(-p_int_rt * p_final_t) * (aao_s_bar(_in_m_brownian).array() - p_strk_prc).max(0.0));}
+				
+		Eigen::VectorXd pd_aao_dlt(const Eigen::MatrixXd _in_m_brownian)
+		{
+				Eigen::VectorXd _s_bar = aao_s_bar(_in_m_brownian);
+				Eigen::VectorXd _pd_aao_dlt = std::exp(-p_final_t * p_int_rt) * (_s_bar.array() / p_init_prc) * (_s_bar.array()  - p_strk_prc > 0).cast<double>();
+				return(_pd_aao_dlt);
+		}
+		
+		double kemna_vorst_block_prc(const Eigen::MatrixXd _in_m_brownian)
+		{
+				Eigen::VectorXd _v_pd_gao_prc = pd_gao_prc(_in_m_brownian);
+				Eigen::VectorXd _v_pd_aao_prc = pd_aao_prc(_in_m_brownian);
+				double _cfs_gao_prc_mean = cfs_gao_prc();
+				double _pd_gao_prc_mean = _v_pd_gao_prc.mean();
+				double _pd_aao_prc_mean = _v_pd_aao_prc.mean();
+				double _var_gao_prc = (_v_pd_gao_prc - _pd_gao_prc_mean).squaredNorm();
+				double _c = _var_gao_prc > 0 ? (_v_pd_aao_prc - _pd_aao_prc_mean).dot(_v_pd_gao_prc - _pd_gao_prc_mean) / _var_gao_prc : 0;
+				return(_pd_aao_prc_mean - _c * (_pd_gao_prc_mean - _cfs_gao_prc_mean));
+		}
+		
+		double kemna_vorst_block_dlt(const Eigen::MatrixXd _in_m_brownian)
+		{
+				Eigen::VectorXd _v_pd_gao_dlt = pd_gao_dlt(_in_m_brownian);
+				Eigen::VectorXd _v_pd_aao_dlt = pd_aao_dlt(_in_m_brownian);
+				double _cfs_gao_dlt_mean = cfs_gao_dlt();
+				double _pd_gao_dlt_mean = _v_pd_gao_dlt.mean();
+				double _pd_aao_dlt_mean = _v_pd_aao_dlt.mean();
+				double _var_gao_dlt = (_v_pd_gao_dlt - _pd_gao_dlt_mean).squaredNorm();
+				double _c = _var_gao_dlt > 0 ? (_v_pd_aao_dlt - _pd_aao_dlt_mean).dot(_v_pd_gao_dlt - _pd_gao_dlt_mean) / _var_gao_dlt : 0;
+				return(_pd_aao_dlt_mean - _c * (_pd_gao_dlt_mean - _cfs_gao_dlt_mean));
+		}
+};
